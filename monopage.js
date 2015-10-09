@@ -250,7 +250,7 @@ var Monopage = (function () {
 
         var state_obj = {
             target_id: target_id,
-            url: prefixUrl(url),
+            url: Utils.prefixUrl(url),
             action: func,
             body: body
         }
@@ -323,56 +323,29 @@ var Monopage = (function () {
         }
 
         // For internal navigation.
-        addInboundListeners(element.getElementsByClassName(conf.link_class_inbound),
-                            handleClick);
+        if (verbose) {
+            console.log("Adding 'click' listeners to inbound links.");
+        }
+
+        Utils.addListeners(element.getElementsByClassName(conf.link_class_inbound),
+                           handleClick);
 
         // For outbound links.
-        addOutboundAttribute(element.getElementsByClassName(conf.link_class_outbound));
-    }
-
-
-
-    function addInboundListeners(list, func, event_type) {
-        event_type = (typeof event_type == 'undefined') ? 'click' : event_type;
-        var m = list.length;
-
-        if (verbose) {
-            console.log("Adding '" + event_type + "' listeners to " + m + " inbound links.");
-        }
-
-        for (var o = 0; o < m; o++) {
-            list[o].addEventListener(event_type, func, false);
-        }
-    }
-
-
-
-    function addOutboundAttribute(list) {
         if (conf.outbound_attr_name && conf.outbound_attr_value) {
             if (verbose) {
-                console.log("Adding '"+conf.outbound_attr_name+"=\""+conf.outbound_attr_value+"\"' attributes to outbound links.");
+                console.log("Adding '"+conf.outbound_attr_name+
+                            "=\""+conf.outbound_attr_value+"\"' attributes to outbound links.");
             }
 
-            Clattr.add(list, conf.outbound_attr_value, conf.outbound_attr_name);
+            Clattr.add(element.getElementsByClassName(conf.link_class_outbound),
+                       conf.outbound_attr_value,
+                       conf.outbound_attr_name);
         }
-
         else {
             if (verbose) {
                 console.log("Not adding attributes to outbound links.");
             }
         }
-    }
-
-
-
-    function getElemFromTarget(tagname, referent) {
-        var elem = referent;
-
-        while ((!elem.tagName) && (elem.tagName != tagname)) {
-            elem = elem.parentNode;
-        }
-
-        return elem;
     }
 
 
@@ -431,9 +404,9 @@ var Monopage = (function () {
         event.preventDefault();
 
         var ref = (event.target) ? event.target : event.srcElement;
-        var link = getElemFromTarget('a', ref);
+        var link = Utils.getNearestParent(ref, 'a');
 
-        var fixed_url = prefixUrl(link.getAttribute('href'));
+        var fixed_url = Utils.prefixUrl(link.getAttribute('href'));
 
         if (body = getBodyFromCache(fixed_url)) {
             if (verbose) {
@@ -592,24 +565,6 @@ var Monopage = (function () {
         }
 
         return func;
-    }
-
-
-
-    // This ensures the given URL starts with `http://` or `https:/`.
-    function prefixUrl(url) {
-        // http:// == 0-6
-        if (url.substring(0, 6) == window.location.origin.substring(0, 6)) {
-            return url;
-        }
-        else {
-            if (url[0] == '/') {
-                return window.location.origin + url;
-            }
-            else {
-                return window.location.origin + '/' + url;
-            }
-        }
     }
 
 
