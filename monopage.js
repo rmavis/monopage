@@ -88,7 +88,8 @@
  * other functions/modules, name a function in a link's `onreturn`
  * attribute.
  *
- * There are four public methods: init, click, touch, and pop.
+ * There are six public methods: init, click, touch, pop, setConf,
+ * and resetConf.
  *
  * When the page first loads, `init` must fire. You need to add a
  * call to that somewhere and pass it appropriate values. It will
@@ -129,28 +130,28 @@
  * For more info, see:
  * https://developer.mozilla.org/en-US/docs/Web/API/History_API
  *
- * There are four global variables:
+ * You can change the configuration settings from the defaults at
+ * any time by passing an object with the right key/value pairs to
+ * `setConf`. And you can reset to the defaults via `resetConf`.
+ *
+ * There are three global variables:
  * - url_cache, being an object correlating URLs with the data those
- *   URLs fetch from the server
- * - async_keep, being an object of objects correlating URLs with
- *   state-related values for use after the AJAX call
- * - verbose, being a boolean indicating whether you want to see
- *   messages in your console.
+ *   URLs fetch from the server.
  * - conf, being an object that contains configuration settings.
  *   Each entry is explained there.
+ * - bk_conf, being a backup of the default configuration settings
+ *   in case you change then via `setConf`.
  *
  */
 
 var Monopage = (function () {
 
-
-    /*
-     * Configuration.
-     */
-
+    // This is the default configuration. These settings can be
+    // modified any time by passing an object with these keys to the
+    // public `setConf` method.
     var conf = {
         // The default element for filling with new page data. Each
-        // link can specify its own target ID (see `elem_target_attr`)
+        // link can specify its own target ID (see `link_attr_target`)
         // but, if it doesn't, then this ID will be used. If this is
         // also false, then the content will be placed nowhere.
         default_target_id: false,
@@ -158,21 +159,21 @@ var Monopage = (function () {
         // The default function to send the response body to when
         // the state is to be made current, whether after a link is
         // clicked or on pop. Each entry in `url_cache` can have its
-        // own instater, but if none is specified, then this is used.
+        // own action, but if none is specified, then this is used.
         // If false, then no action will occur by default, and if the
         // link function is also missing, then nothing will occur :(
         // This should be a string.
-        default_instater: false,
+        default_action: false,
 
         // Each link can name a function to handle the return from the
         // `href` it calls. This names the attribute to read from the
         // link.
-        elem_handler_attr: 'onreturn',
+        link_attr_action: 'onreturn',
 
         // Each link can name a target element ID to receive the return
         // from the URL it calls. This names the attribute to read from
         // the link.
-        elem_target_attr: 'target',
+        link_attr_target: 'target',
 
         // This is the class name for inbound links. Links with this
         // class will get event listeners on `init` or when `touch`ed.
@@ -195,7 +196,12 @@ var Monopage = (function () {
         // stack. Their URLs will not become current, their actions
         // will not run on back/forward clicks, etc., but they will
         // still be added to the `url_cache`.
-        link_class_histless: 'hist-no',
+        link_class_nohist: 'nohist',
+
+        // If a link has this class, the click and pop procedure will
+        // run as normal but the server return won't be cached. So
+        // each click and pop will send a request.
+        link_class_nocache: 'nocache',
 
         // This names the function that transforms the server response
         // before using it. If this doesn't name a function, then the
@@ -206,14 +212,68 @@ var Monopage = (function () {
         // If the server response is an object, then this key needs to
         // name the key that contains the body. But if the response is
         // a string, just make this false.
-        response_key_body: 'body'
+        response_key_body: 'body',
+
+        // This number specifies the maximum number of entries allowed
+        // in the `url_cache`. If it is 0, no cache will be stored.
+        // If it is negative, everything will be stored. Else, the
+        // last `conf.cache` entries will be stored.
+        cache: -1,
+
+        // If this is true, then Monopage will write messages to the
+        // console that allow you to track its progress. If false,
+        // it won't.
+        log: true
     };
 
 
 
-    var verbose = true,
+    var bk_conf = null,
         url_cache = { },
         async_keep = { };
+
+
+
+    function makeNewConf(conf_obj) {
+        if (conf.log) {
+            console.log("Pulling new config settings from:");
+            console.log(conf_obj);
+        }
+
+        bk_conf = conf;
+
+        var new_conf = Utils.sieve(conf, conf_obj);
+
+        if (conf.log) {
+            console.log("New config settings:");
+            console.log(new_conf);
+        }
+
+        conf = new_conf;
+
+        return conf;
+    }
+
+
+
+    function resetConfToDefault() {
+        if (bk_conf) {
+            if (conf.log) {
+                console.log("Resetting config to default.");
+            }
+
+            conf = bk_conf;
+            bk_conf = null;
+        }
+
+        else {
+            if (conf.log) {
+                console.log("Would reset config to default but there is no backup of the defaults.");
+            }
+        }
+
+        return conf;
+    }
 
 
 
@@ -224,12 +284,15 @@ var Monopage = (function () {
     function setInitialState(url, body, target_id, func, call_func) {
         var state_obj = makeStateObject(url, body, target_id, func);
 
-        if (verbose) {
+        if (conf.log) {
             console.log("Replacing first history entry for '" + state_obj.url + "'.");
         }
 
         window.history.replaceState(prepStateForHistory(state_obj), '', state_obj.url);
-        addBodyToCache(state_obj);
+
+        if (conf.cache) {
+            addBodyToCache(state_obj);
+        }
 
         // This is useful for cases in which the initial state is
         // set by the server, so the page is ready to go and needs
@@ -263,32 +326,74 @@ var Monopage = (function () {
     // Pass this a link element.
     function makeStateObjectFromLink(link) {
         var url = link.getAttribute('href') || null;
-        var func = link.getAttribute(conf.elem_handler_attr) || null;
-        var target_id = link.getAttribute(conf.elem_target_attr) || null;
+        var func = link.getAttribute(conf.link_attr_action) || null;
+        var target_id = link.getAttribute(conf.link_attr_target) || null;
 
         return makeStateObject(url, null, target_id, func);
     }
 
 
 
-    // Pass this a state object and an optional boolean indicating
-    // whether the state should be recorded. False will be assumed
-    // for the boolean.
-    function makeAsyncObject(state, record) {
+    // Pass this a state object and two optional booleans indicating
+    // whether (1) the state should be recorded, and (2) whether the
+    // return should be caches.
+    function makeAsyncObject(state, record, cache) {
         record = ((typeof record != undefined) && (record)) ? true : false;
+
+        if (typeof cache == undefined) {
+            cache = (conf.cache == 0) ? false : true;
+        }
 
         return {
             state: state,
-            record: record
+            record: record,
+            cache: cache
         }
     }
 
 
 
+    // This procedure doesn't check if the given `state_obj.url` is
+    // in the cache. The process of making a request, handling the
+    // response, and adding to the cache only occurrs when the cache
+    // doesn't contain the current URL.
     function addBodyToCache(state_obj) {
-        url_cache[state_obj.url] = state_obj.body;
+        var added = false;
 
-        if (verbose) {
+        if (conf.cache < 0) {
+            url_cache[state_obj.url] = state_obj.body;
+            added = true;
+        }
+
+        else if (conf.cache > 0) {
+            var cache_size = Object.keys(url_cache).length;
+
+            if (cache_size < conf.cache) {
+                url_cache[state_obj.url] = state_obj.body;
+                added = true;
+            }
+
+            else if (cache_size >= conf.cache) {
+                var n = (cache_size - conf.cache) + 1;
+
+                if (conf.log) {
+                    console.log("Removing entries from cache: over limit by "+n+".");
+                }
+
+                for (var o = 0; o < n; o++) {
+                    var key = Object.keys(url_cache).shift();
+                    delete url_cache[key];
+                }
+            }
+        }
+
+        else {
+            if (conf.log) {
+                console.log("Cache limit is 0. Not adding entry to cache for '"+state_obj.url+"'.");
+            }
+        }
+
+        if (added && conf.log) {
             console.log("Adding entry to cache for '"+state_obj.url+"'.");
             console.log("Current cache:");
             console.log(url_cache);
@@ -299,7 +404,7 @@ var Monopage = (function () {
 
     function getBodyFromCache(url) {
         if (url in url_cache) {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Checking '" + url + "': exists in cache.");
             }
 
@@ -307,7 +412,7 @@ var Monopage = (function () {
         }
 
         else {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Checking '" + url + "': doesn't exist in cache.");
             }
 
@@ -318,12 +423,12 @@ var Monopage = (function () {
 
 
     function touchLinksInRegion(element) {
-        if (verbose) {
+        if (conf.log) {
             console.log("Checking the region's links.");
         }
 
         // For internal navigation.
-        if (verbose) {
+        if (conf.log) {
             console.log("Adding 'click' listeners to inbound links.");
         }
 
@@ -332,7 +437,7 @@ var Monopage = (function () {
 
         // For outbound links.
         if (conf.outbound_attr_name && conf.outbound_attr_value) {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Adding '"+conf.outbound_attr_name+
                             "=\""+conf.outbound_attr_value+"\"' attributes to outbound links.");
             }
@@ -342,7 +447,7 @@ var Monopage = (function () {
                        conf.outbound_attr_name);
         }
         else {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Not adding attributes to outbound links.");
             }
         }
@@ -353,7 +458,7 @@ var Monopage = (function () {
     // This occurs onpopstate, so no history should be pushed.
     function handlePop(event) {
         if ((event.state) && (body = getBodyFromCache(event.state.url))) {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Popping '"+event.state.url+"' from cache.");
             }
 
@@ -366,7 +471,7 @@ var Monopage = (function () {
 
         else if (event.state.url) {
             if (event.state.target_id || event.state.action) {
-                if (verbose) {
+                if (conf.log) {
                     console.log("Popping '"+event.state.url+"' from history but need body from server.");
                 }
 
@@ -375,7 +480,7 @@ var Monopage = (function () {
             }
 
             else {
-                if (verbose) {
+                if (conf.log) {
                     console.log("No state for '"+event.state.url+"'. Handling URL like linkless click.");
                 }
 
@@ -385,7 +490,7 @@ var Monopage = (function () {
         }
 
         else {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Major weirdness. Making the request, hoping for the best.");
             }
 
@@ -397,7 +502,7 @@ var Monopage = (function () {
 
 
     function handleClick(event) {
-        if (verbose) {
+        if (conf.log) {
             console.log("Handling click.");
         }
 
@@ -409,7 +514,7 @@ var Monopage = (function () {
         var fixed_url = Utils.prefixUrl(link.getAttribute('href'));
 
         if (body = getBodyFromCache(fixed_url)) {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Got body for '" + fixed_url + "' from cache.");
             }
 
@@ -419,12 +524,13 @@ var Monopage = (function () {
         }
 
         else {
-            if (verbose) {
+            if (conf.log) {
                 console.log("No entry for '" + fixed_url + "' in cache.");
             }
 
             async_keep[fixed_url] = (makeAsyncObject(makeStateObjectFromLink(link),
-                                                     shouldMakeHistory(link)));
+                                                     shouldMakeHistory(link),
+                                                     shouldCache(link)));
             requestAndHandle(fixed_url);
         }
     }
@@ -432,7 +538,7 @@ var Monopage = (function () {
 
 
     function requestAndHandle(url) {
-        if (verbose) {
+        if (conf.log) {
             console.log("Sending GET request to " + url);
         }
 
@@ -442,13 +548,13 @@ var Monopage = (function () {
 
 
     function handleReturn(response, url) {
-        if (typeof conf.response_transform == 'function') {
-            response = conf.response_transform(response);
-        }
-
-        if (verbose) {
+        if (conf.log) {
             console.log("Handling server return from '"+url+"':");
             console.log(response);
+        }
+
+        if (typeof conf.response_transform == 'function') {
+            response = conf.response_transform(response);
         }
 
         var body = (conf.response_key_body) ? response[conf.response_key_body] : response;
@@ -457,7 +563,10 @@ var Monopage = (function () {
             async_keep[url].state.body = body;
 
             makeStateCurrent(async_keep[url].state, async_keep[url].record);
-            addBodyToCache(async_keep[url].state);
+
+            if (async_keep[url].cache) {
+                addBodyToCache(async_keep[url].state);
+            }
 
             if (async_keep[url].state.target_id) {
                 touchLinksInRegion(document.getElementById(async_keep[url].state.target_id));
@@ -475,7 +584,7 @@ var Monopage = (function () {
 
 
     function makeStateCurrent(state_obj, record) {
-        if (verbose) {
+        if (conf.log) {
             console.log("Making this state the current state:");
             console.log(state_obj);
         }
@@ -488,7 +597,7 @@ var Monopage = (function () {
         }
 
         if (target) {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Filling target with state body.");
             }
 
@@ -496,7 +605,7 @@ var Monopage = (function () {
         }
 
         if (func) {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Calling return function '"+func+"' with state object.");
             }
 
@@ -522,7 +631,7 @@ var Monopage = (function () {
             target = document.getElementById(target_id);
         }
 
-        if (verbose) {
+        if (conf.log) {
             if (target) {
                 console.log("Using target ID '"+target_id+"' for current state.");
             }
@@ -543,19 +652,19 @@ var Monopage = (function () {
             func = state_obj.action;
         }
 
-        else if (conf.default_instater) {
-            if (typeof conf.default_instater == 'string') {
-                func = conf.default_instater;
+        else if (conf.default_action) {
+            if (typeof conf.default_action == 'string') {
+                func = conf.default_action;
             }
-            else if (typeof conf.default_instater == 'function') {
-                func = String(conf.default_instater);
+            else if (typeof conf.default_action == 'function') {
+                func = String(conf.default_action);
             }
             else {
-                console.log("MAJOR MALFUNCTION: default instater is neither a function nor a string.");
+                console.log("MAJOR MALFUNCTION: default action is neither a function nor a string.");
             }
         }
 
-        if (verbose) {
+        if (conf.log) {
             if (func) {
                 console.log("Using return function '"+func+"' for current state.");
             }
@@ -569,17 +678,44 @@ var Monopage = (function () {
 
 
 
+    function shouldCache(link) {
+        var should = (conf.cache === 0) ? false : true;
+
+        if (Clattr.has(link, conf.link_class_nocache)) {
+            should = false;
+
+            if (conf.log) {
+                console.log("Should not cache state: link has '"+conf.link_class_nocache+"'.");
+            }
+        }
+
+        else {
+            if (conf.log) {
+                if (should) {
+                    console.log("Should cache state.");
+                }
+                else {
+                    console.log("Should not cache state.");
+                }
+            }
+        }
+
+        return should;
+    }
+
+
+
     function shouldMakeHistory(link) {
         var should = false;
 
-        if (Clattr.has(link, conf.link_class_histless)) {
-            if (verbose) {
+        if (Clattr.has(link, conf.link_class_nohist)) {
+            if (conf.log) {
                 console.log("Should not add history entry for " + link.getAttribute('href'));
             }
         }
 
         else {
-            if (verbose) {
+            if (conf.log) {
                 console.log("Should add history entry for " + link.getAttribute('href'));
             }
 
@@ -592,7 +728,7 @@ var Monopage = (function () {
 
 
     function prepStateForHistory(state_obj) {
-        if (verbose) {
+        if (conf.log) {
             console.log("Prepping state object for the history stack.");
         }
 
@@ -608,7 +744,7 @@ var Monopage = (function () {
 
 
     function pushStateToHistory(state_obj) {
-        if (verbose) {
+        if (conf.log) {
             console.log("Adding history entry for " + state_obj.url);
         }
 
@@ -641,6 +777,14 @@ var Monopage = (function () {
 
         touch: function(element) {
             touchLinksInRegion(element);
+        },
+
+        setConf: function(new_conf) {
+            return makeNewConf(new_conf);
+        },
+
+        resetConf: function() {
+            return resetConfToDefault();
         }
 
     };
