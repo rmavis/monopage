@@ -509,7 +509,7 @@ var Monopage = (function () {
         event.preventDefault();
 
         var ref = (event.target) ? event.target : event.srcElement;
-        var link = Utils.getNearestParent(ref, 'a');
+        var link = Utils.getNearestParentByTagname(ref, 'a');
 
         var fixed_url = Utils.prefixUrl(link.getAttribute('href'));
 
