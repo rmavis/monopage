@@ -223,7 +223,7 @@ var Monopage = (function () {
         // If this is true, then Monopage will write messages to the
         // console that allow you to track its progress. If false,
         // it won't.
-        log: true
+        log: false
     };
 
 
