@@ -562,11 +562,11 @@ var Monopage = (function () {
         if (async_keep[url]) {
             async_keep[url].state.body = body;
 
-            makeStateCurrent(async_keep[url].state, async_keep[url].record);
-
             if (async_keep[url].cache) {
                 addBodyToCache(async_keep[url].state);
             }
+
+            makeStateCurrent(async_keep[url].state, async_keep[url].record);
 
             if (async_keep[url].state.target_id) {
                 touchLinksInRegion(document.getElementById(async_keep[url].state.target_id));
